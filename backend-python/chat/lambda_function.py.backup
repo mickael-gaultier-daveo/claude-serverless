@@ -1,0 +1,224 @@
+"""
+Lambda function pour le chat avec Claude via Bedrock avec streaming
+"""
+import json
+import os
+import sys
+from typing import Dict, Any, List
+import awslambdaric.response_stream
+from awslambdaric.lambda_context import LambdaContext
+
+# Ajouter le répertoire shared au path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
+
+from aws_clients import get_bedrock_client, get_dynamodb_table
+from utils import (
+    create_response, extract_user_id, generate_ttl, generate_id,
+    validate_json_body, format_conversation_messages, log_error
+)
+
+def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Handler principal pour les requêtes de chat
+    """
+    try:
+        # Validation de la méthode HTTP
+        http_method = event.get('httpMethod', event.get('requestContext', {}).get('http', {}).get('method'))
+        
+        if http_method == 'OPTIONS':
+            return create_response(200, {'message': 'OK'})
+        
+        if http_method != 'POST':
+            return create_response(405, {'error': 'Method not allowed'})
+
+        # Extraction de l'utilisateur
+        user_id = extract_user_id(event)
+        if not user_id:
+            return create_response(401, {'error': 'Unauthorized'})
+
+        # Validation du body
+        body, error = validate_json_body(event, ['message'])
+        if error:
+            return create_response(400, {'error': error})
+            response_stream.end()
+            return
+
+        # Initialiser le stream
+        response_stream = awslambdaric.response_stream.ResponseStream(metadata)
+        
+        # Traiter la requête avec streaming
+        process_chat_request_stream(user_id, body, response_stream)
+        
+        response_stream.end()
+
+    except Exception as e:
+        log_error('chat_handler', e, {'user_id': user_id if 'user_id' in locals() else None})
+        metadata["statusCode"] = 500
+        response_stream = awslambdaric.response_stream.ResponseStream(metadata)
+        response_stream.write(json.dumps({
+            'error': 'Internal server error',
+            'message': str(e)
+        }))
+        response_stream.end()
+
+def process_chat_request_stream(user_id: str, body: Dict[str, Any], response_stream):
+    """
+    Traiter une requête de chat avec streaming
+    """
+    message = body['message']
+    conversation_id = body.get('conversationId', generate_id())
+    file_contents = body.get('fileContents', [])
+    
+    timestamp = int(time.time() * 1000)  # Timestamp en millisecondes
+    
+    # Récupérer l'historique de conversation
+    conversation_history = get_conversation_history(user_id, conversation_id)
+    
+    # Construire le contexte des messages
+    context_messages = conversation_history.copy()
+    
+    # Ajouter le contenu des fichiers si fourni
+    if file_contents:
+        files_context = "\n\n".join([
+            f"<file_{i+1}>\n{content}\n</file_{i+1}>"
+            for i, content in enumerate(file_contents)
+        ])
+        
+        context_messages.append({
+            'role': 'user',
+            'content': f"Voici les fichiers fournis en contexte:\n\n{files_context}",
+            'timestamp': timestamp - 1
+        })
+    
+    # Ajouter le message utilisateur
+    user_message = {
+        'role': 'user',
+        'content': message,
+        'timestamp': timestamp
+    }
+    context_messages.append(user_message)
+    
+    # Envoyer un message de début au client
+    start_msg = json.dumps({'type': 'start', 'conversationId': conversation_id})
+    response_stream.write((start_msg + '\n').encode('utf-8'))
+    
+    # Appel à Bedrock Claude avec streaming vers le client
+    assistant_response = call_bedrock_claude_stream(context_messages, response_stream)
+    
+    # Envoyer un message de fin au client
+    end_msg = json.dumps({'type': 'end', 'timestamp': int(time.time() * 1000)})
+    response_stream.write(('\n' + end_msg).encode('utf-8'))
+    
+    assistant_message = {
+        'role': 'assistant',
+        'content': assistant_response,
+        'timestamp': int(time.time() * 1000)
+    }
+    
+    # Sauvegarder la conversation
+    updated_messages = context_messages + [assistant_message]
+    save_conversation(user_id, conversation_id, updated_messages)
+
+def get_conversation_history(user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
+    """
+    Récupérer l'historique d'une conversation
+    """
+    try:
+        table_name = os.environ.get('DYNAMODB_TABLE')
+        if not table_name:
+            return []
+        
+        table = get_dynamodb_table(table_name)
+        
+        response = table.get_item(
+            Key={
+                'user_id': user_id,
+                'conversation_id': conversation_id
+            }
+        )
+        
+        if 'Item' in response:
+            return response['Item'].get('messages', [])
+        
+        return []
+        
+    except Exception as e:
+        log_error('get_conversation_history', e, {
+            'user_id': user_id, 
+            'conversation_id': conversation_id
+        })
+        return []
+
+def call_bedrock_claude(messages: List[Dict[str, Any]]) -> str:
+    """
+    Appeler Claude via Bedrock
+    """
+    try:
+        bedrock_client = get_bedrock_client()
+        
+        # Formater les messages pour Bedrock
+        formatted_messages = format_conversation_messages(messages)
+        
+        # Préparer la requête Bedrock
+        request_body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 4000,
+            "messages": formatted_messages,
+            "system": "Tu es un assistant IA utile et bienveillant. Tu peux analyser des documents et répondre aux questions à leur sujet. Réponds de manière claire et structurée."
+        }
+        
+        # Appel à Bedrock Claude 4.5 Sonnet via profil d'inférence
+        response = bedrock_client.invoke_model(
+            modelId='eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            contentType='application/json',
+            body=json.dumps(request_body)
+        )
+        
+        # Traiter la réponse
+        response_body = json.loads(response['body'].read())
+        
+        if 'content' in response_body and len(response_body['content']) > 0:
+            return response_body['content'][0]['text']
+        else:
+            return "Désolé, je n'ai pas pu générer une réponse."
+        
+        return full_response if full_response else "Désolé, je n'ai pas pu générer une réponse."
+            
+    except Exception as e:
+        log_error('call_bedrock_claude_stream', e)
+        error_msg = f"Erreur lors de l'appel à Claude: {str(e)}"
+        response_stream.write(error_msg.encode('utf-8'))
+        return error_msg
+
+def save_conversation(user_id: str, conversation_id: str, messages: List[Dict[str, Any]]):
+    """
+    Sauvegarder une conversation en DynamoDB
+    """
+    try:
+        table_name = os.environ.get('DYNAMODB_TABLE')
+        if not table_name:
+            return
+        
+        table = get_dynamodb_table(table_name)
+        
+        # Garder seulement les 20 derniers messages
+        recent_messages = messages[-20:] if len(messages) > 20 else messages
+        
+        table.put_item(
+            Item={
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'messages': recent_messages,
+                'timestamp': int(time.time() * 1000),
+                'ttl': generate_ttl(90)  # 3 mois
+            }
+        )
+        
+    except Exception as e:
+        log_error('save_conversation', e, {
+            'user_id': user_id,
+            'conversation_id': conversation_id
+        })
+
+# Import time au niveau du module
+import time

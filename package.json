@@ -1,0 +1,22 @@
+{
+  "name": "claude-serverless",
+  "version": "1.0.0",
+  "description": "Serverless chat application with Claude 3.5 Sonnet",
+  "scripts": {
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "dev": "concurrently \"cd frontend && npm run dev\" \"cd backend && npm run dev\"",
+    "build": "cd frontend && npm run build",
+    "deploy:infra": "cd infrastructure && terraform apply",
+    "deploy:backend": "cd backend && npm run deploy",
+    "deploy:frontend": "cd frontend && npm run deploy",
+    "deploy:all": "npm run deploy:infra && npm run deploy:backend && npm run deploy:frontend",
+    "lint": "cd frontend && npm run lint && cd ../backend && npm run lint",
+    "test": "cd frontend && npm run test && cd ../backend && npm run test"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

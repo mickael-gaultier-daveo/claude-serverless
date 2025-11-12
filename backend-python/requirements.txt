@@ -1,0 +1,6 @@
+# Dépendances pour le traitement de fichiers
+PyPDF2>=3.0.1
+python-docx>=1.1.0
+
+# Note: boto3 est déjà disponible dans l'environnement Lambda AWS
+# Ne pas inclure boto3/botocore dans le layer pour éviter les conflits de version

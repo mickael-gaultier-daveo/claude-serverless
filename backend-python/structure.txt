@@ -1,0 +1,5 @@
+chat/
+file_processor/
+shared/
+requirements.txt
+deploy.py
