@@ -67,6 +67,8 @@ build/
 venv/
 env/
 ENV/
+**/packages/
+**/site-packages/
 
 # Frontend builds  
 frontend/dist/
