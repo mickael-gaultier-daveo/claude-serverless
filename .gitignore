@@ -51,6 +51,23 @@ Thumbs.db
 backend/dist/
 backend/layers/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+env/
+ENV/
+
 # Frontend builds  
 frontend/dist/
 frontend/.vite/
