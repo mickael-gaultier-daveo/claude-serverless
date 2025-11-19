@@ -51,6 +51,13 @@ Thumbs.db
 backend/dist/
 backend/layers/
 
+# Old/unused backend versions (keep only backend-python-lwa)
+backend-nodejs/
+backend-python-fastapi/
+backend-python-pure/
+backend/
+backend-python/
+
 # Python
 __pycache__/
 *.py[cod]
