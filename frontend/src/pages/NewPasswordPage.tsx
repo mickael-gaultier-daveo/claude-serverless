@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { PasswordInput } from '../components/PasswordInput';
 import { Lock } from 'lucide-react';
 
 export function NewPasswordPage() {
+  const navigate = useNavigate();
   const { completeNewPasswordChallenge, isLoading } = useAuth();
   const [formData, setFormData] = useState({
     newPassword: '',
@@ -55,6 +57,8 @@ export function NewPasswordPage() {
 
     try {
       await completeNewPasswordChallenge(formData.newPassword);
+      // Rediriger vers la page de chat après le succès
+      navigate('/chat');
     } catch (error: any) {
       console.error('Error completing new password challenge:', error);
       setError(error.message || 'Erreur lors du changement de mot de passe');
