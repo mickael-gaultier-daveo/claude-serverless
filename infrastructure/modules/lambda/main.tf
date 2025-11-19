@@ -89,50 +89,59 @@ resource "aws_lambda_layer_version" "dependencies" {
   }
 }
 
-# Fonction Lambda pour le chat
-resource "aws_lambda_function" "chat_handler" {
-  filename         = "../backend-python/dist/chat-handler.zip"
-  function_name    = "${var.project_name}-${var.environment}-chat-handler"
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "lambda_function.lambda_handler"
-  source_code_hash = filebase64sha256("../backend-python/dist/chat-handler.zip")
-  runtime         = "python3.9"
-  timeout         = 30
-
-  layers = [aws_lambda_layer_version.dependencies.arn]
-
-  environment {
-    variables = {
-      ENVIRONMENT = var.environment
-      COGNITO_USER_POOL_ID = var.cognito_user_pool_id
-      DYNAMODB_TABLE = "${var.project_name}-${var.environment}-chat-history"
-    }
-  }
+# CloudWatch Log Group pour la Lambda chat-handler avec rétention de 30 jours
+resource "aws_cloudwatch_log_group" "chat_handler_logs" {
+  name              = "/aws/lambda/${var.project_name}-${var.environment}-chat-handler"
+  retention_in_days = 30
 
   tags = var.tags
 }
 
-# Fonction Lambda pour le traitement de fichiers
-resource "aws_lambda_function" "file_processor" {
-  filename         = "../backend-python/dist/file-processor.zip"
-  function_name    = "${var.project_name}-${var.environment}-file-processor"
+# Fonction Lambda pour le chat (Python 3.13 avec FastAPI + Lambda Web Adapter pour streaming)
+resource "aws_lambda_function" "chat_handler" {
+  filename         = "../dist/chat-handler.zip"
+  function_name    = "${var.project_name}-${var.environment}-chat-handler"
   role            = aws_iam_role.lambda_role.arn
-  handler         = "lambda_function.lambda_handler"
-  source_code_hash = filebase64sha256("../backend-python/dist/file-processor.zip")
-  runtime         = "python3.9"
+  handler         = "run.sh"
+  source_code_hash = filebase64sha256("../dist/chat-handler.zip")
+  runtime         = "python3.13"
   timeout         = 60
+  memory_size      = 256
 
-  layers = [aws_lambda_layer_version.dependencies.arn]
+  # Lambda Web Adapter Layer pour le streaming avec FastAPI
+  layers = [
+    "arn:aws:lambda:eu-west-3:753240598075:layer:LambdaAdapterLayerX86:25"
+  ]
 
   environment {
     variables = {
       ENVIRONMENT = var.environment
       COGNITO_USER_POOL_ID = var.cognito_user_pool_id
       DYNAMODB_TABLE = "${var.project_name}-${var.environment}-chat-history"
+      PORT = "8080"
+      AWS_LAMBDA_EXEC_WRAPPER = "/opt/bootstrap"
+      AWS_LWA_INVOKE_MODE = "response_stream"
     }
   }
 
+  depends_on = [aws_cloudwatch_log_group.chat_handler_logs]
+
   tags = var.tags
+}
+
+# Lambda Function URL pour le chat avec Response Streaming (Python 3.13 FastAPI + Lambda Web Adapter)
+resource "aws_lambda_function_url" "chat_handler_url" {
+  function_name      = aws_lambda_function.chat_handler.function_name
+  authorization_type = "NONE"
+  invoke_mode        = "RESPONSE_STREAM"
+
+  cors {
+    allow_credentials = true
+    allow_origins     = ["*"]
+    allow_methods     = ["*"]
+    allow_headers     = ["*"]
+    max_age          = 86400
+  }
 }
 
 # Permissions pour API Gateway d'invoquer les fonctions Lambda
@@ -140,14 +149,6 @@ resource "aws_lambda_permission" "chat_handler_api_gateway" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.chat_handler.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${var.api_gateway_execution_arn}/*/*"
-}
-
-resource "aws_lambda_permission" "file_processor_api_gateway" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.file_processor.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_gateway_execution_arn}/*/*"
 }

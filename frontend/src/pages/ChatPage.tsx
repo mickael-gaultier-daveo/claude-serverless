@@ -1,14 +1,16 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Send, Upload, FileText, LogOut, Key } from 'lucide-react';
-import { chatService } from '../services/chatService';
+import { Send, Upload, FileText, LogOut, Key, Paperclip, History, ChevronDown } from 'lucide-react';
+import { chatService, ConversationListItem } from '../services/chatService';
 import { ChangePasswordPage } from './ChangePasswordPage';
+import { MarkdownContent } from '../components/MarkdownContent';
 
 interface Message {
   id: string;
   content: string;
   role: 'user' | 'assistant';
   timestamp: number;
+  files?: { name: string; type: string }[];
 }
 
 export function ChatPage() {
@@ -21,64 +23,146 @@ export function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [conversationId, setConversationId] = useState<string>();
+  const [oldConversationId, setOldConversationId] = useState<string | null>(null); // Pour fork
+  const [conversationsList, setConversationsList] = useState<ConversationListItem[]>([]);
+  const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
+
+  // Charger l'historique au démarrage
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Récupérer la liste de toutes les conversations de l'utilisateur
+        const convList = await chatService.listConversations();
+        setConversationsList(convList.conversations || []);
+        
+        if (convList.conversations && convList.conversations.length > 0) {
+          // Charger la conversation la plus récente (première de la liste car triée par timestamp décroissant)
+          const mostRecentConversation = convList.conversations[0];
+          const history = await chatService.getConversationHistory(mostRecentConversation.conversationId);
+          
+          if (history.messages && history.messages.length > 0) {
+            // Convertir les messages DynamoDB en messages de l'interface
+            const loadedMessages: Message[] = history.messages.map((msg, index) => ({
+              id: `${msg.timestamp}-${index}`,
+              content: msg.content,
+              role: msg.role,
+              timestamp: msg.timestamp,
+              files: msg.files,
+            }));
+            
+            setMessages(loadedMessages);
+            setConversationId(mostRecentConversation.conversationId);
+            console.log(`Loaded conversation ${mostRecentConversation.conversationId} with ${loadedMessages.length} messages`);
+          }
+        } else {
+          console.log('No conversations found, starting fresh');
+        }
+      } catch (error) {
+        console.error('Error loading conversation history:', error);
+        // En cas d'erreur, on ignore et démarre une nouvelle conversation
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadHistory();
+  }, []);
+
+  // Sauvegarder le conversationId dans le localStorage quand il change (pour référence)
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem('currentConversationId', conversationId);
+    }
+  }, [conversationId]);
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() && files.length === 0) return;
+
+    // Si on reprend une ancienne conversation (oldConversationId !== null), on la forke
+    if (oldConversationId !== null) {
+      try {
+        // Supprimer l'ancienne version
+        await chatService.deleteConversation(oldConversationId);
+        console.log(`Forked conversation ${oldConversationId}, old version deleted`);
+        
+        // Reset pour créer une nouvelle conversation
+        setConversationId(undefined);
+        setOldConversationId(null);
+        
+        // Recharger la liste des conversations
+        const convList = await chatService.listConversations();
+        setConversationsList(convList.conversations || []);
+      } catch (error) {
+        console.error('Error forking conversation:', error);
+      }
+    }
+
+    // Traitement des fichiers d'abord pour avoir les métadonnées
+    let processedFiles: { fileName: string; fileType: string; fileContent: string }[] = [];
+    if (files.length > 0) {
+      processedFiles = await chatService.processFiles(files);
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
       content: inputMessage,
       role: 'user',
       timestamp: Date.now(),
+      files: processedFiles.length > 0 ? processedFiles.map(f => ({ name: f.fileName, type: f.fileType })) : undefined,
     };
 
     setMessages(prev => [...prev, userMessage]);
     const messageToSend = inputMessage;
     setInputMessage('');
+    setFiles([]); // Clear files after adding to message
     setIsLoading(true);
 
-    try {
-      // Traitement des fichiers en base64
-      const fileContents: string[] = [];
-      if (files.length > 0) {
-        const processedFiles = await chatService.processFiles(files);
-        for (const file of processedFiles) {
-          fileContents.push(file.fileContent);
-        }
-        setFiles([]); // Clear files after processing
-      }
+    // Créer un message assistant vide pour le streaming
+    const assistantMessageId = (Date.now() + 1).toString();
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      content: '',
+      role: 'assistant',
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, assistantMessage]);
 
-      // Envoi du message à l'API
-      const response = await chatService.sendMessage({
+    try {
+      // Envoi du message avec streaming (conversationId undefined = nouvelle conversation)
+      const stream = chatService.sendMessageStream({
         message: messageToSend,
         conversationId,
-        fileContents: fileContents.length > 0 ? fileContents : undefined,
+        files: processedFiles.length > 0 ? processedFiles : undefined,
       });
 
-      // Mise à jour de l'ID de conversation
-      if (response.conversationId) {
-        setConversationId(response.conversationId);
+      // Consommer le stream et mettre à jour le message en temps réel
+      let fullResponse = '';
+      for await (const event of stream) {
+        if (event.type === 'start' && event.conversationId) {
+          setConversationId(event.conversationId);
+        } else if (event.type === 'chunk' && event.content) {
+          fullResponse += event.content;
+          setMessages(prev => prev.map(msg => 
+            msg.id === assistantMessageId 
+              ? { ...msg, content: fullResponse }
+              : msg
+          ));
+        }
       }
-      
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.response,
-        role: 'assistant',
-        timestamp: Date.now(),
-      };
-
-      setMessages(prev => [...prev, botMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
       
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: "Désolé, une erreur s'est produite lors de l'envoi du message. Veuillez réessayer.",
-        role: 'assistant',
-        timestamp: Date.now(),
-      };
-
-      setMessages(prev => [...prev, errorMessage]);
+      // Mettre à jour le message assistant avec l'erreur
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId 
+          ? { 
+              ...msg, 
+              content: "Désolé, une erreur s'est produite lors de l'envoi du message. Veuillez réessayer." 
+            }
+          : msg
+      ));
     } finally {
       setIsLoading(false);
     }
@@ -91,6 +175,40 @@ export function ChatPage() {
 
   const removeFile = (index: number) => {
     setFiles(prev => prev.filter((_: File, i: number) => i !== index));
+  };
+
+  const startNewConversation = () => {
+    setMessages([]);
+    setConversationId(undefined);
+    setOldConversationId(null);
+    localStorage.removeItem('currentConversationId');
+  };
+
+  const loadOldConversation = async (convId: string) => {
+    try {
+      setIsLoading(true);
+      const history = await chatService.getConversationHistory(convId);
+      
+      if (history.messages && history.messages.length > 0) {
+        const loadedMessages: Message[] = history.messages.map((msg, index) => ({
+          id: `${msg.timestamp}-${index}`,
+          content: msg.content,
+          role: msg.role,
+          timestamp: msg.timestamp,
+          files: msg.files,
+        }));
+        
+        setMessages(loadedMessages);
+        setConversationId(convId);
+        setOldConversationId(convId); // Marquer comme ancienne conversation
+        setShowHistoryDropdown(false);
+        console.log(`Loaded old conversation ${convId} with ${loadedMessages.length} messages`);
+      }
+    } catch (error) {
+      console.error('Error loading old conversation:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Si l'utilisateur veut changer son mot de passe
@@ -108,6 +226,55 @@ export function ChatPage() {
             <p className="text-sm text-gray-600">Bonjour, {user?.username}</p>
           </div>
           <div className="flex items-center space-x-3">
+            <button
+              onClick={startNewConversation}
+              className="btn-secondary flex items-center gap-2"
+              title="Nouvelle conversation"
+            >
+              <FileText className="h-4 w-4" />
+              Nouvelle
+            </button>
+            
+            {/* Bouton Historique avec dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowHistoryDropdown(!showHistoryDropdown)}
+                className="btn-secondary flex items-center gap-2"
+                title="Historique des conversations"
+                disabled={conversationsList.length === 0}
+              >
+                <History className="h-4 w-4" />
+                Historique
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              
+              {showHistoryDropdown && conversationsList.length > 0 && (
+                <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50">
+                  {conversationsList.map((conv) => (
+                    <button
+                      key={conv.conversationId}
+                      onClick={() => loadOldConversation(conv.conversationId)}
+                      className={`w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 ${
+                        conv.conversationId === conversationId ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {conv.preview}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {conv.messageCount} messages • {new Date(conv.timestamp).toLocaleDateString('fr-FR', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            
             <button
               onClick={() => setShowChangePassword(true)}
               className="btn-secondary flex items-center gap-2"
@@ -142,14 +309,27 @@ export function ChatPage() {
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                  className={`max-w-[75%] px-5 py-4 rounded-lg ${
                     message.role === 'user'
                       ? 'bg-primary-600 text-white'
                       : 'bg-white text-gray-900 shadow-sm border border-gray-200'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${
+                  {message.files && message.files.length > 0 && (
+                    <div className="mb-3 pb-2 border-b border-white/20">
+                      {message.files.map((file, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-xs opacity-90">
+                          <Paperclip className="h-3 w-3" />
+                          <span className="font-medium">{file.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <MarkdownContent 
+                    content={message.content} 
+                    isUser={message.role === 'user'}
+                  />
+                  <p className={`text-xs mt-2 ${
                     message.role === 'user' ? 'text-primary-100' : 'text-gray-500'
                   }`}>
                     {new Date(message.timestamp).toLocaleTimeString()}

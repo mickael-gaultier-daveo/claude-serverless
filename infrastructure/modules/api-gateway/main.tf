@@ -81,63 +81,11 @@ resource "aws_api_gateway_method" "chat_options" {
   authorization = "NONE"
 }
 
-# Ressource /files
-resource "aws_api_gateway_resource" "files" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
-  path_part   = "files"
-}
-
-# Méthode POST pour /files (upload)
-resource "aws_api_gateway_method" "files_post" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.files.id
-  http_method   = "POST"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
-
-  request_parameters = {
-    "method.request.header.Authorization" = true
-  }
-}
-
-# Intégration Lambda pour /files
-resource "aws_api_gateway_integration" "files_lambda" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.files.id
-  http_method = aws_api_gateway_method.files_post.http_method
-
-  integration_http_method = "POST"
-  type                   = "AWS_PROXY"
-  uri                    = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${var.file_processor_lambda_arn}/invocations"
-}
-
-# Méthode OPTIONS pour CORS
-resource "aws_api_gateway_method" "files_options" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.files.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
-}
-
 # Réponse OPTIONS pour CORS
 resource "aws_api_gateway_method_response" "chat_options_response" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.chat.id
   http_method = aws_api_gateway_method.chat_options.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = true
-    "method.response.header.Access-Control-Allow-Methods" = true
-    "method.response.header.Access-Control-Allow-Origin"  = true
-  }
-}
-
-resource "aws_api_gateway_method_response" "files_options_response" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.files.id
-  http_method = aws_api_gateway_method.files_options.http_method
   status_code = "200"
 
   response_parameters = {
@@ -159,36 +107,12 @@ resource "aws_api_gateway_integration" "chat_options_integration" {
   }
 }
 
-resource "aws_api_gateway_integration" "files_options_integration" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.files.id
-  http_method = aws_api_gateway_method.files_options.http_method
-  type        = "MOCK"
-
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
-}
-
 # Réponse d'intégration OPTIONS pour CORS
 resource "aws_api_gateway_integration_response" "chat_options_integration_response" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.chat.id
   http_method = aws_api_gateway_method.chat_options.http_method
   status_code = aws_api_gateway_method_response.chat_options_response.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-    "method.response.header.Access-Control-Allow-Methods" = "'POST,OPTIONS'"
-    "method.response.header.Access-Control-Allow-Origin"  = "'https://claude-serverless.daveo-dev.fr'"
-  }
-}
-
-resource "aws_api_gateway_integration_response" "files_options_integration_response" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.files.id
-  http_method = aws_api_gateway_method.files_options.http_method
-  status_code = aws_api_gateway_method_response.files_options_response.status_code
 
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
@@ -209,14 +133,9 @@ resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_method.chat_post,
     aws_api_gateway_method.chat_options,
-    aws_api_gateway_method.files_post,
-    aws_api_gateway_method.files_options,
     aws_api_gateway_integration.chat_lambda,
-    aws_api_gateway_integration.files_lambda,
     aws_api_gateway_integration.chat_options_integration,
-    aws_api_gateway_integration.files_options_integration,
     aws_api_gateway_integration_response.chat_options_integration_response,
-    aws_api_gateway_integration_response.files_options_integration_response,
     aws_api_gateway_gateway_response.unauthorized,
     aws_api_gateway_gateway_response.access_denied,
     aws_api_gateway_gateway_response.default_4xx,
@@ -229,11 +148,8 @@ resource "aws_api_gateway_deployment" "main" {
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.chat.id,
-      aws_api_gateway_resource.files.id,
       aws_api_gateway_method.chat_post.id,
-      aws_api_gateway_method.files_post.id,
       aws_api_gateway_integration.chat_lambda.id,
-      aws_api_gateway_integration.files_lambda.id,
       aws_api_gateway_gateway_response.unauthorized.id,
       aws_api_gateway_gateway_response.access_denied.id,
       aws_api_gateway_gateway_response.default_4xx.id,

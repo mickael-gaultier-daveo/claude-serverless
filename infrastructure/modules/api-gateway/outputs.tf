@@ -17,8 +17,3 @@ output "chat_resource_id" {
   description = "ID de la ressource /chat"
   value       = aws_api_gateway_resource.chat.id
 }
-
-output "files_resource_id" {
-  description = "ID de la ressource /files"
-  value       = aws_api_gateway_resource.files.id
-}

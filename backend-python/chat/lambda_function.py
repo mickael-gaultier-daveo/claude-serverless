@@ -1,5 +1,5 @@
 """
-Lambda function pour le chat avec Claude via Bedrock
+Lambda function pour le chat avec Claude via Bedrock avec streaming
 """
 import json
 import os
@@ -16,44 +16,99 @@ from utils import (
     validate_json_body, format_conversation_messages, log_error
 )
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def streaming_handler(event: Dict[str, Any], context: Any):
     """
-    Handler principal pour les requêtes de chat
+    Generator pour le streaming de réponses
     """
     try:
-        # Validation de la méthode HTTP
-        http_method = event.get('httpMethod', event.get('requestContext', {}).get('http', {}).get('method'))
+        # Log de debug pour voir la structure de l'event
+        print(f"DEBUG: Event keys: {list(event.keys())}")
+        print(f"DEBUG: Event: {json.dumps(event, default=str)[:500]}")
+        
+        # Validation de la méthode HTTP (Lambda Function URL format 2.0)
+        request_context = event.get('requestContext', {})
+        http_method = (
+            event.get('httpMethod') or  # API Gateway format
+            request_context.get('http', {}).get('method') or  # Function URL format 2.0
+            request_context.get('requestContext', {}).get('http', {}).get('method')  # Nested format
+        )
+        print(f"DEBUG: HTTP Method: {http_method}")
         
         if http_method == 'OPTIONS':
-            return create_response(200, {'message': 'OK'})
-        
-        if http_method != 'POST':
-            return create_response(405, {'error': 'Method not allowed'})
-
-        # Extraction de l'utilisateur
-        user_id = extract_user_id(event)
-        if not user_id:
-            return create_response(401, {'error': 'Unauthorized'})
-
-        # Validation du body
-        body, error = validate_json_body(event, ['message'])
-        if error:
-            return create_response(400, {'error': error})
-
-        # Traiter la requête
-        result = process_chat_request(user_id, body)
-        return create_response(200, result)
+            yield json.dumps({'message': 'OK'}).encode('utf-8')
+        elif http_method != 'POST':
+            yield json.dumps({'type': 'error', 'content': f'Method not allowed: {http_method}'}).encode('utf-8')
+        else:
+            # Extraction de l'utilisateur
+            user_id = extract_user_id(event)
+            print(f"DEBUG: User ID: {user_id}")
+            if not user_id:
+                yield json.dumps({'type': 'error', 'content': 'Unauthorized'}).encode('utf-8')
+            else:
+                # Validation du body
+                body, error = validate_json_body(event, ['message'])
+                if error:
+                    yield json.dumps({'type': 'error', 'content': error}).encode('utf-8')
+                else:
+                    # Traiter la requête avec streaming
+                    for chunk in process_chat_request_stream_generator(user_id, body):
+                        yield chunk
 
     except Exception as e:
         log_error('chat_handler', e)
-        return create_response(500, {
-            'error': 'Internal server error',
-            'message': str(e)
-        })
+        yield json.dumps({
+            'type': 'error',
+            'content': f'Internal server error: {str(e)}'
+        }).encode('utf-8')
 
-def process_chat_request(user_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+def lambda_handler(event: Dict[str, Any], context: Any):
     """
-    Traiter une requête de chat
+    Handler principal pour les requêtes de chat.
+    Accumule tous les chunks et les retourne en une seule réponse NDJSON.
+    """
+    try:
+        # Vérifier si c'est une requête OPTIONS pour CORS
+        http_method = event.get('httpMethod', event.get('requestContext', {}).get('http', {}).get('method'))
+        
+        if http_method == 'OPTIONS':
+            # Les headers CORS sont gérés par la Lambda Function URL
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'message': 'OK'})
+            }
+        
+        # Accumuler tous les chunks du générateur
+        chunks = []
+        for chunk in streaming_handler(event, context):
+            chunks.append(chunk.decode('utf-8') if isinstance(chunk, bytes) else chunk)
+        
+        # Retourner la réponse complète
+        # Note: Les headers CORS sont gérés par la Lambda Function URL, pas besoin de les ajouter ici
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/x-ndjson',
+                'Cache-Control': 'no-cache'
+            },
+            'body': ''.join(chunks)
+        }
+        
+    except Exception as e:
+        log_error('lambda_handler', e)
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json'
+            },
+            'body': json.dumps({
+                'type': 'error',
+                'content': f'Internal server error: {str(e)}'
+            })
+        }
+
+def process_chat_request_stream_generator(user_id: str, body: Dict[str, Any]):
+    """
+    Générateur pour traiter une requête de chat avec streaming
     """
     message = body['message']
     conversation_id = body.get('conversationId', generate_id())
@@ -88,8 +143,26 @@ def process_chat_request(user_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     }
     context_messages.append(user_message)
     
-    # Appel à Bedrock Claude
-    assistant_response = call_bedrock_claude(context_messages)
+    # Envoyer les métadonnées de début
+    start_data = {
+        'type': 'start',
+        'conversationId': conversation_id,
+        'timestamp': timestamp
+    }
+    yield (json.dumps(start_data) + '\n').encode('utf-8')
+    
+    # Appel à Bedrock Claude avec streaming
+    assistant_response = ""
+    for chunk in call_bedrock_claude_stream_generator(context_messages):
+        assistant_response += chunk.decode('utf-8') if isinstance(chunk, bytes) else chunk
+        yield chunk
+    
+    # Envoyer les métadonnées de fin
+    end_data = {
+        'type': 'end',
+        'timestamp': int(time.time() * 1000)
+    }
+    yield ('\n' + json.dumps(end_data)).encode('utf-8')
     
     assistant_message = {
         'role': 'assistant',
@@ -100,12 +173,6 @@ def process_chat_request(user_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     # Sauvegarder la conversation
     updated_messages = conversation_history + [user_message, assistant_message]
     save_conversation(user_id, conversation_id, updated_messages)
-    
-    return {
-        'response': assistant_response,
-        'conversationId': conversation_id,
-        'timestamp': assistant_message['timestamp']
-    }
 
 def get_conversation_history(user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
     """
@@ -173,6 +240,63 @@ def call_bedrock_claude(messages: List[Dict[str, Any]]) -> str:
     except Exception as e:
         log_error('call_bedrock_claude', e)
         return f"Erreur lors de l'appel à Claude: {str(e)}"
+
+def call_bedrock_claude_stream_generator(messages: List[Dict[str, Any]]):
+    """
+    Générateur pour appeler Claude via Bedrock avec streaming
+    """
+    try:
+        bedrock_client = get_bedrock_client()
+        
+        # Formater les messages pour Bedrock
+        formatted_messages = format_conversation_messages(messages)
+        
+        # Préparer la requête Bedrock
+        request_body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 4000,
+            "messages": formatted_messages,
+            "system": "Tu es un assistant IA utile et bienveillant. Tu peux analyser des documents et répondre aux questions à leur sujet. Réponds de manière claire et structurée."
+        }
+        
+        # Appel à Bedrock Claude 4.5 Sonnet avec streaming
+        bedrock_response = bedrock_client.invoke_model_with_response_stream(
+            modelId='eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            contentType='application/json',
+            body=json.dumps(request_body)
+        )
+        
+        # Traiter le stream de réponse
+        stream = bedrock_response.get('body')
+        
+        if stream:
+            for event in stream:
+                chunk = event.get('chunk')
+                if chunk:
+                    chunk_data = json.loads(chunk.get('bytes').decode())
+                    
+                    # Bedrock renvoie différents types d'événements
+                    if chunk_data['type'] == 'content_block_delta':
+                        if 'delta' in chunk_data and 'text' in chunk_data['delta']:
+                            text_chunk = chunk_data['delta']['text']
+                            
+                            # Envoyer le chunk au client
+                            chunk_message = {
+                                'type': 'chunk',
+                                'content': text_chunk
+                            }
+                            yield (json.dumps(chunk_message) + '\n').encode('utf-8')
+            
+    except Exception as e:
+        log_error('call_bedrock_claude_stream_generator', e)
+        error_message = f"Erreur lors de l'appel à Claude: {str(e)}"
+        
+        # Envoyer l'erreur au client
+        error_chunk = {
+            'type': 'error',
+            'content': error_message
+        }
+        yield (json.dumps(error_chunk) + '\n').encode('utf-8')
 
 def save_conversation(user_id: str, conversation_id: str, messages: List[Dict[str, Any]]):
     """

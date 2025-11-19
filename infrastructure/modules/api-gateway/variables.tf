@@ -18,11 +18,6 @@ variable "chat_lambda_arn" {
   type        = string
 }
 
-variable "file_processor_lambda_arn" {
-  description = "ARN de la fonction Lambda pour le traitement de fichiers"
-  type        = string
-}
-
 variable "tags" {
   description = "Tags à appliquer aux ressources"
   type        = map(string)

@@ -42,9 +42,36 @@ def create_response(status_code: int, body: Dict[str, Any],
 def extract_user_id(event: Dict[str, Any]) -> Optional[str]:
     """Extraire l'ID utilisateur depuis le contexte d'autorisation Cognito"""
     try:
+        # Essayer d'abord avec l'authorizer (API Gateway)
         authorizer = event.get('requestContext', {}).get('authorizer', {})
         claims = authorizer.get('claims', {})
-        return claims.get('sub')
+        user_id = claims.get('sub')
+        
+        if user_id:
+            return user_id
+        
+        # Sinon, décoder le JWT du header Authorization (Lambda Function URL)
+        headers = event.get('headers', {})
+        auth_header = headers.get('authorization') or headers.get('Authorization')
+        
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            # Décoder le JWT (sans vérification de signature pour l'instant)
+            # Le payload est la partie centrale du JWT (header.payload.signature)
+            parts = token.split('.')
+            if len(parts) == 3:
+                # Ajouter le padding nécessaire pour base64
+                payload = parts[1]
+                padding = 4 - (len(payload) % 4)
+                if padding != 4:
+                    payload += '=' * padding
+                
+                import base64
+                decoded = base64.urlsafe_b64decode(payload)
+                claims = json.loads(decoded)
+                return claims.get('sub')
+        
+        return None
     except Exception as e:
         logger.error(f"Erreur extraction user_id: {e}")
         return None

@@ -1,0 +1,68 @@
+/* Styles pour le rendu Markdown dans les messages */
+.markdown-content {
+  line-height: 1.6;
+}
+
+.markdown-content > *:first-child {
+  margin-top: 0 !important;
+}
+
+.markdown-content > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Améliorer l'espacement des listes imbriquées */
+.markdown-content ul ul,
+.markdown-content ul ol,
+.markdown-content ol ul,
+.markdown-content ol ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  margin-left: 1.5rem;
+}
+
+/* Style pour les liens */
+.markdown-content a {
+  font-weight: 500;
+}
+
+/* Style pour les blocs de code */
+.markdown-content pre {
+  max-width: 100%;
+}
+
+.markdown-content pre code {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Style pour les tableaux */
+.markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+/* Améliorer la lisibilité des citations */
+.markdown-content blockquote {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Espacer les éléments de liste */
+.markdown-content li {
+  margin-bottom: 0.25rem;
+}
+
+.markdown-content li:last-child {
+  margin-bottom: 0;
+}
+
+/* Style pour les checkboxes (GitHub Flavored Markdown) */
+.markdown-content input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+/* Améliorer le contraste pour le code inline */
+.markdown-content code {
+  font-weight: 500;
+}

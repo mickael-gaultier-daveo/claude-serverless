@@ -98,7 +98,6 @@ module "api_gateway" {
   environment               = var.environment
   cognito_user_pool_arn     = module.cognito.user_pool_arn
   chat_lambda_arn           = module.lambda.chat_lambda_arn
-  file_processor_lambda_arn = module.lambda.file_processor_lambda_arn
   
   tags = local.common_tags
 }
