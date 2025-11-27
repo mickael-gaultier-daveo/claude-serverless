@@ -66,17 +66,31 @@ export function NewPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div 
+      className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative"
+      style={{
+        backgroundImage: 'url(/background.webp)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed'
+      }}
+    >
+      {/* Overlay léger pour améliorer la lisibilité */}
+      <div className="absolute inset-0 bg-white/10" />
+      
+      {/* Contenu par-dessus le fond */}
+      <div className="relative z-10">
+      
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
           <div className="bg-primary-600 p-3 rounded-full">
             <Lock className="h-8 w-8 text-white" />
           </div>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-white drop-shadow-lg">
           Nouveau mot de passe requis
         </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
+        <p className="mt-2 text-center text-sm text-white drop-shadow-md">
           Vous devez définir un nouveau mot de passe pour continuer
         </p>
       </div>
@@ -148,6 +162,7 @@ export function NewPasswordPage() {
             </div>
           </form>
         </div>
+      </div>
       </div>
     </div>
   );

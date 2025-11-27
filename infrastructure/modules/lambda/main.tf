@@ -76,6 +76,27 @@ resource "aws_iam_role_policy" "dynamodb_policy" {
   })
 }
 
+# Politique IAM pour KMS (chiffrement des messages)
+resource "aws_iam_role_policy" "kms_policy" {
+  name = "${var.project_name}-${var.environment}-lambda-kms-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = var.kms_key_arn
+      }
+    ]
+  })
+}
+
 # Lambda Layer pour les dépendances communes Python
 resource "aws_lambda_layer_version" "dependencies" {
   filename         = "../backend-python/layers/dependencies.zip"
@@ -118,6 +139,8 @@ resource "aws_lambda_function" "chat_handler" {
       ENVIRONMENT = var.environment
       COGNITO_USER_POOL_ID = var.cognito_user_pool_id
       DYNAMODB_TABLE = "${var.project_name}-${var.environment}-chat-history"
+      USAGE_TRACKING_TABLE = "${var.project_name}-${var.environment}-usage-tracking"
+      KMS_KEY_ID = var.kms_key_id
       PORT = "8080"
       AWS_LAMBDA_EXEC_WRAPPER = "/opt/bootstrap"
       AWS_LWA_INVOKE_MODE = "response_stream"

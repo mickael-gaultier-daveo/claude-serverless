@@ -1,0 +1,11 @@
+[31m╷[0m[0m
+[31m│[0m [0m[1m[31mError: [0m[0m[1mNo valid credential sources found[0m
+[31m│[0m [0m
+[31m│[0m [0m[0mPlease see https://www.terraform.io/docs/language/settings/backends/s3.html
+[31m│[0m [0mfor more information about providing credentials.
+[31m│[0m [0m
+[31m│[0m [0mError: failed to refresh cached credentials, no EC2 IMDS role found,
+[31m│[0m [0moperation error ec2imds: GetMetadata, request canceled, context deadline
+[31m│[0m [0mexceeded
+[31m│[0m [0m
+[31m╵[0m[0m

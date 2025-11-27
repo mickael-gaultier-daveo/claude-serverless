@@ -23,6 +23,16 @@ variable "cognito_user_pool_id" {
   type        = string
 }
 
+variable "kms_key_arn" {
+  description = "ARN de la clé KMS pour le chiffrement des messages"
+  type        = string
+}
+
+variable "kms_key_id" {
+  description = "ID de la clé KMS pour le chiffrement des messages"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags à appliquer aux ressources"
   type        = map(string)

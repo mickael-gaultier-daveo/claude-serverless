@@ -39,6 +39,24 @@ export interface ConversationListResponse {
   count: number;
 }
 
+export interface MonthlyUsage {
+  month: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export interface MonthlyUsageResponse {
+  year: number;
+  monthlyData: Array<{
+    month: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }>;
+  totalCost: number;
+}
+
 class ChatService {
   private streamUrl: string;
 
@@ -204,6 +222,66 @@ class ChatService {
     } catch (error) {
       console.error('Error deleting conversation:', error);
       throw new Error('Failed to delete conversation');
+    }
+  }
+
+  async deleteAllConversations(): Promise<{ deletedCount: number; message: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.streamUrl}/conversations`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error deleting all conversations:', error);
+      throw new Error('Failed to delete all conversations');
+    }
+  }
+
+  async getCurrentMonthUsage(): Promise<MonthlyUsage> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.streamUrl}/usage/current-month`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting usage stats:', error);
+      throw new Error('Failed to get usage stats');
+    }
+  }
+
+  async getMonthlyUsageYear(): Promise<MonthlyUsageResponse> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.streamUrl}/usage/monthly-year`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting monthly usage:', error);
+      throw new Error('Failed to get monthly usage');
     }
   }
 

@@ -102,6 +102,15 @@ module "api_gateway" {
   tags = local.common_tags
 }
 
+module "dynamodb" {
+  source = "./modules/dynamodb"
+  
+  project_name = var.project_name
+  environment  = var.environment
+  
+  tags = local.common_tags
+}
+
 module "lambda" {
   source = "./modules/lambda"
   
@@ -110,15 +119,8 @@ module "lambda" {
   api_gateway_id         = module.api_gateway.api_gateway_id
   api_gateway_execution_arn = module.api_gateway.api_gateway_execution_arn
   cognito_user_pool_id   = module.cognito.user_pool_id
-  
-  tags = local.common_tags
-}
-
-module "dynamodb" {
-  source = "./modules/dynamodb"
-  
-  project_name = var.project_name
-  environment  = var.environment
+  kms_key_arn            = module.dynamodb.kms_key_arn
+  kms_key_id             = module.dynamodb.kms_key_id
   
   tags = local.common_tags
 }

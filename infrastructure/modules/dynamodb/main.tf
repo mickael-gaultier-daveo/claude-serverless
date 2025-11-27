@@ -34,3 +34,22 @@ resource "aws_dynamodb_table" "chat_history" {
 
   tags = var.tags
 }
+
+# Clé KMS pour le chiffrement des messages
+resource "aws_kms_key" "chat_encryption" {
+  description             = "KMS key for encrypting chat messages content"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-chat-encryption"
+    }
+  )
+}
+
+resource "aws_kms_alias" "chat_encryption" {
+  name          = "alias/${var.project_name}-${var.environment}-chat-encryption"
+  target_key_id = aws_kms_key.chat_encryption.key_id
+}
